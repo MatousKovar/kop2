@@ -53,7 +53,7 @@ def simulated_annealing(instance: MWSATInstance,
             # delta is how better or worse the solution is in terms of clauses satisfied combined with normalized sum of weights
             if fitness_coefficient:
                 normalized_score = (neighbor.current_score - current_state.current_score) / instance.max_weight
-                delta = (neighbor.clauses_satisfied - current_state.clauses_satisfied) + fitness_coefficient * normalized_score
+                delta = (1-fitness_coefficient) * (neighbor.clauses_satisfied - current_state.clauses_satisfied) + fitness_coefficient * normalized_score
             else:
                 delta = neighbor.clauses_satisfied - current_state.clauses_satisfied
 
@@ -106,7 +106,7 @@ def set_delta(instance: MWSATInstance,
             # delta is how better or worse the solution is in terms of clauses satisfied
             if fitness_coefficient:
                 normalized_score = (neighbor.current_score - current_state.current_score) / instance.max_weight
-                delta = (neighbor.clauses_satisfied - current_state.clauses_satisfied) + fitness_coefficient * normalized_score
+                delta = (1-fitness_coefficient) * (neighbor.clauses_satisfied - current_state.clauses_satisfied) + fitness_coefficient * normalized_score
             else:
                 delta = neighbor.clauses_satisfied - current_state.clauses_satisfied            
             # if delta == 0:
