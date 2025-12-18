@@ -1,0 +1,445 @@
+\documentclass{article}
+\usepackage[utf8]{inputenc}
+\usepackage{geometry}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{float}
+\usepackage{amsmath} 
+\usepackage{booktabs}
+\usepackage[czech]{babel}
+ \geometry{
+ a4paper,
+ total={170mm,257mm},
+ left=20mm,
+ top=20mm,
+ }
+ \usepackage{graphicx}
+ \usepackage{titling}
+
+ \title{NI-KOP 2. Úloha}
+\author{Matouš Kovář}
+\date{Prosinec 2025}
+ 
+ \usepackage{fancyhdr}
+\fancypagestyle{plain}{%  the preset of fancyhdr 
+    \fancyhf{} % clear all header and footer fields
+    \fancyhead[R]{\thedate}
+}
+
+
+\usepackage{titlesec} % for customizing section titles
+
+\titleformat{\section}
+  {\normalfont\Large\bfseries\color{cyan}} % or light blue: 'cyan' or custom color
+  {\thesection}{1em}{}
+
+\titleformat{\subsection}
+  {\normalfont\large\bfseries\color{cyan}}
+  {\thesubsection}{1em}{}
+
+\makeatletter
+\def\@maketitle{%
+  \newpage
+  \null
+  \vskip 1em%
+  \begin{center}%
+  \let \footnote \thanks
+    {\LARGE \@title \par}%
+    \vskip 1em%
+    %{\large \@date}%
+  \end{center}%
+  \par
+  \vskip 1em}
+\makeatother
+
+\usepackage{lipsum}  
+% \usepackage{cmbright}
+
+\begin{document}
+
+\maketitle
+
+\noindent\begin{tabular}{@{}ll}
+    \theauthor\\
+\end{tabular}
+
+\section{Stručný souhrn}
+
+Tato práce porovnává dva lokální algoritmy pro řešení SAT — \textbf{GSAT} a \textbf{probSAT}. 
+Cílem bylo zhodnotit jejich efektivitu podle počtu kroků potřebných k nalezení řešení na instancích s 20, 50 a 75 proměnnými. 
+
+Analýza ukázala, že \textbf{probSAT} systematicky dosahuje lepších výsledků než \textbf{GSAT} z hlediska počtu iterací potřebných k nalezení řešení. \textbf{probSAT} se jeví jako spolehlivá volba solveru pro instance zkoumané v této práci. 
+
+
+\section{Úvod}
+
+Cílem této semestrální práce je návrh, implementace a experimentální vyhodnocení řešení problému maximální vážené splnitelnosti booleovské formule (MWSAT). Jedná se o optimalizační rozšíření problému SAT, kde je každé klauzuli přiřazena nezáporná váha a úkolem je nalézt takové ohodnocení proměnných, které maximalizuje součet vah splněných klauzulí a zároveň splňuje všechny klauzule. Vzhledem k tomu, že se jedná o problém patřící do třídy NPO, je pro hledání kvalitního řešení v rozumném čase využita pokročilá iterační heuristika – konkrétně \textbf{simulované ochlazování}.\\
+
+
+Řešení musí být schopno zpracovávat instance rozdílných vlastností a velikostí bez nutnosti interaktivních zásahů do konfigurace. Algoritmus je navrhován tak, aby si poradil s instancemi, které jsou považovány za výpočetně náročné ve smyslu Sellmanova kritéria fázového přechodu.\\
+
+Tento dokument reflektuje postup řešení rozdělený do dvou klíčových fází:
+
+\begin{itemize}
+    \item \textbf{White box fáze} -- popisuje proces hledání konfigurace, ladění parametrů a analýzu neúspěšných řešení.
+    \item \textbf{Black box fáze} -- předkládá finální experimentální vyhodnocení hotové heuristiky na nezávislé testovací sadě. V této části je ověřena škálovatelnost, stabilita a celková úspěšnost algoritmu.
+\end{itemize}
+
+\section{Materiál}
+
+Celá práce je vypracována v programovacím jazyce \textbf{Python}. Pro načítání vstupních dat a ukládání výsledků byly implementovány specializované třídy \texttt{MWSATInstance} a \texttt{MWSATSolution}. Tyto třídy zajišťují nejen manipulaci s daty, ale umožňují i efektivní mapování a sledování postupu algoritmu během výpočtu. Samotný algoritmus je realizován pomocí funkce \texttt{simulated\_annealing}.\\
+
+Pro následnou vizualizaci naměřených dat a tvorbu grafů jsou využity knihovny \textbf{Matplotlib} a \textbf{Seaborn}. Veškeré experimenty byly spouštěny v prostředí Jupyter Notebook na stroji \textbf{MacBook Pro} s procesorem \textbf{M4}, přičemž pro urychlení výpočtů bylo využito 12 procesorových jader.\\
+
+Pro experimentální vyhodnocení byly použity celkem tři velikostní kategorie datových sad. Tyto sady obsahují instance o \textbf{20, 50 a 75 proměnných}. Zatímco sady s 20 a 50 proměnnými obsahují 1000 instancí, sada se 75 proměnnými je omezena na 100 instancí. Klíčovou vlastností použitých dat je jejich variabilita ve váhách: každá velikostní kategorie obsahuje \textbf{čtyři podsady}, které se liší způsobem generování vah jednotlivých klauzulí. Toto rozdělení umožňuje ověřit robustnost heuristiky na instancích s odlišným charakterem váhové funkce.\\
+
+
+\section{Popis algoritmu a implementace}
+
+Základem implementovaného řešení je stochastická metaheuristika simulovaného ochlazování (Simulated Annealing). Architektura řešení je rozdělena do dvou hlavních tříd: \texttt{MWSATInstance}, která zajišťuje načítání a předzpracování dat, a \texttt{MWSATSolution}, která reprezentuje aktuální stav v prohledávacím prostoru a zapouzdřuje operace nad ohodnocením řešení.
+
+\subsection{Reprezentace dat a vyhodnocovací funkce}
+Vstupní data instancí jsou v rámci předzpracování transformována. Klíčovým krokem je \textbf{min-max normalizace vah} proměnných do intervalu $[0, 1]$. Tento krok je zásadní pro robustnost algoritmu, neboť umožňuje definovat hyperparametry (zejména počáteční teplotu a penalizace) nezávisle na absolutní velikosti vah v konkrétní instanci.
+
+Algoritmus využívá hierarchickou vyhodnocovací logiku (lexikografické uspořádání), která striktně upřednostňuje validitu řešení před jeho váhou. Při porovnání dvou stavů $S_{old}$ a $S_{new}$ platí:
+
+\begin{enumerate}
+    \item \textbf{Kritérium splnění formule:} Pokud nový splňuje více klauzulí než starý, je považován za striktně lepší bez ohledu na součet vah. Tím je zajištěno směřování do oblasti přípustných řešení.
+    \item \textbf{Kritérium maximalizace součtu vah:} Pouze pokud je počet splněných klauzulí shodný, rozhoduje o kvalitě vyšší normalizovaný součet vah aktivních proměnných.
+\end{enumerate}
+
+Pro případy kdy nalezneme hoší nové řešení využíváme fitness funkci, na které je závislá pravděpodobnost přijetí tohoto řešení. Tato funkce bude popsána v sekci níže. 
+
+\subsection{Parametry algoritmu}
+Chování algoritmu je řízeno sadou hyperparametrů:
+
+\begin{description}
+    \item[P0 (Počáteční pravděpodobnost přijetí):] Určuje počáteční teplotu $T_{start}$. Teplota je nastavena tak, aby v úvodní fázi byla průměrná pravděpodobnost přijetí zhoršujícího stavu rovna hodnotě P0.
+    
+    \item[Cooling Coefficient:] Koeficient ochlazování, kterým je po každém evilibriu násobena aktuální teplota.
+    
+    \item[Equilibrium Steps:] Nastavuje délku vnitřního cyklu pro danou teplotní hladinu. Parametr je násoben počtem klauzulí, tak aby přirozeně pro instance s více podmínkami prozkoumával déle. 
+
+    
+    \item[Fitness Coefficient:] Váha penalizace za nesplněnou klauzuli ve fitness funkci. 
+    Musí být nastavena tak, aby algoritmus nikdy neupřednostnil zisk váhy za cenu porušení logické platnosti formule.
+    
+    \item[Max Steps Without Improvement:] Zastavovací kritérium. Pokud algoritmus nenalezne nové globální maximum po počtu kroků odpovídajícímu 
+    $$max\_steps\_without\_improvement * num\_clauses$$
+    , tak je ukončen.
+    
+    \item[Random Flip:] Binární parametr určující strategii výběru proměnné pro změnu stavu (flip):
+    \begin{itemize}
+        \item \textit{True:} Náhodný výběr jakékoliv proměnné.
+        \item \textit{False:} Pokud existují nesplněné klauzule, vybírá se proměnná z náhodně zvolené nesplněné klauzule. To cíleně opravuje validitu řešení.
+    \end{itemize}
+\end{description}
+
+
+
+\subsection{Metodika lazení}
+Lazení parametrů bylo provedeno iterativně. Jelikož jsou parametry na sobě závislé, neexistuje nějaký obecný způsob v jakém pořadí by se měly ladit. Každopádně odrazovým můstkem nám bude baseline konfigurace - tedy nějaká konfigurace, která relativně dobře funguje na datech.
+
+Co se týče dat, na kterých budeme parametry ladit, tak zde jsem nejprve používal data s 50 proměnnými a váhamy druhu M. V poslední části evaluace, kde jsem ověřoval funkčnost parametrů na jiných sadách, jsem došel k tomu, že parametry nefungují výrazně tak dobře na sadách R a Q. Proto jsem whitebox fázi udělal znovu, tentokrát ale na datech z instance R. To budou výsledky při volbě parametrů v této práci - \texttt{wuf-50-218-R}.
+
+\subsection{Volba baseline konfigurace}
+
+Jako prvotní konfiguraci pro můj algoritmus jsem zvolil následující tabulku\ref{tab:baseline_params}:
+
+\begin{table}[h!]
+\centering
+\caption{Výchozí konfigurace parametrů (Baseline)}
+\label{tab:baseline_params}
+\begin{tabular}{|l|c|l|}
+\hline
+\textbf{Parametr (kód)} & \textbf{Hodnota} & \textbf{Význam} \\ \hline
+\texttt{P0} & 0.9 & Počáteční pravděpodobnost přijetí horšího stavu \\ \hline
+\texttt{cooling\_coefficient} & 0.9 & Faktor geometrického ochlazování teploty \\ \hline
+\texttt{equilibrium\_steps} & 3 & Násobek $N_{vars}$ pro délku vnitřního cyklu \\ \hline
+\texttt{fitness\_coefficient} & 300 & Váha penalizace za nesplněné klauzule \\ \hline
+\texttt{max\_steps\_without\_improvement} & 100 & Násobek $N_{clauses}$ pro zastavení při stagnaci \\ \hline
+\texttt{random\_flip} & True & Strategie čistě náhodného výběru proměnné \\ \hline
+\end{tabular}
+\end{table}
+
+Jak si vedla tato konfigurace na 10 bězích 10 různých instancí je možné vidět na tabulce \ref{tab:results_baseline}. Hlavní pozornost by měla být na počtu vyřešených instancí, který je velmi malý. První otázka se tedy rovnou nabízí: Jakvíce tlačit na splnění formule? 
+
+\begin{table}[h!]
+\centering
+\caption{Výsledky experimentu - Baseline (úspěšnost z 10 běhů)}
+\label{tab:results_baseline}
+\begin{tabular}{lrr}
+\toprule
+\textbf{Instance} & \textbf{Solved} & \textbf{Optimal} \\ 
+\midrule
+wuf50-0323 & 6 & 2 \\
+wuf50-0366 & 5 & 5 \\
+wuf50-069  & 5 & 5 \\
+wuf50-094  & 0 & 0 \\
+wuf50-0861 & 2 & 2 \\
+wuf50-0824 & 3 & 2 \\
+wuf50-0657 & 10 & 3 \\
+wuf50-0286 & 0 & 0 \\
+wuf50-0612 & 8 & 7 \\
+wuf50-0939 & 3 & 2 \\
+\bottomrule
+\end{tabular}
+\end{table}
+\subsection{Nastavení výběru proměnné}
+
+Parametr \texttt{random\_flip} nastavený na False zajišťuje, že budou obraceny jen ty proměnné, které jsou obsaženy v nesplňených klauzulích. Tento krok se ukázal jako výhodný, což potvrzuje následující tabulka \ref{tab:results_improved}.
+
+
+\begin{table}[H]
+\centering
+\caption{Výsledky vylepšené konfigurace (úspěšnost z 10 běhů)}
+\label{tab:results_improved}
+\begin{tabular}{lrr}
+\toprule
+\textbf{Instance} & \textbf{Solved} & \textbf{Optimal} \\ 
+\midrule
+wuf50-0323 & 10 & 10 \\
+wuf50-0366 & 10 & 10 \\
+wuf50-069  & 10 & 10 \\
+wuf50-094  & 7  & 5 \\
+wuf50-0861 & 10 & 9 \\
+wuf50-0824 & 9  & 4 \\
+wuf50-0657 & 10 & 6 \\
+wuf50-0286 & 10 & 10 \\
+wuf50-0612 & 10 & 10 \\
+wuf50-0939 & 10 & 6 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Nastavení fitness funkce}
+
+Nyní přejdeme k dalšímu klíčovému parametru a to fitness funkci. Fitness funkce přímo ovlivňuje pravděpodobnost s kterou je horší stav přijat při dané teplotě. Původně byla navržena fitness funkce následující: 
+$$
+f(s) = \text{Weight}_{norm}(s) - (\text{fintess\_coefficient} \cdot N_{unsat}(s))
+$$
+
+kde $\text{Weight}_{norm}$ je součet normalizovaných vah splněných proměnných, $N_{unsat}$ je počet nesplněných klauzulí a \texttt{fitness\_coefficient} je koeficient penalizace ovlivňující jak moc má vliv každá nesplněná klausule.
+
+Tato fitness funkce fungovala poměrně dobře, nicméně při revizi kódu mě napadl hlavní nedostateka to je absence jakékoliv škálovatelnosti na počet proměnných. Například pro instance s větším počtem proměnných bude první člen $\text{Weight}_{norm}$ přirozeně větší zase naopak druhý člen bude pro instance s větším počtem klausulí nabývat vyšší absolutní hodnoty, jelikož může obsahovat větší počet nesplněných klauzulí. 
+
+Proto byla fitness funkce přepracována na následující finální podobu, která adresuje tyto nedostatky: 
+
+$$
+f(s) = \text{Weight}_{norm}(s) - (\text{fintess\_coefficient} \cdot \text{num\_variables} \cdot \text{unsat\_ratio})
+$$
+
+kde \texttt{num\_variables} je počet proměnných a \texttt{unsat\_ratio} je poměr nesplněných klauzulí vůči všem klauzulím.
+
+Hodnota \texttt{fitness\_coefficient} byla experimentálně nastavena na hodnotu 100 (viz. tabulka \ref{tab:fitness_tuning} a funkce \texttt{run_tuning_experiment}, která byla spouštěna na různých instancích). Na grafu je možné vidět běhy na jedné instanci s růžnými hodnotami. Pro nízké hodnoty je  vidět jak algoritmus upřednostní řešení s větší váhou, protože nejsou dostatečně penalizovány nesplněné klauzule. Solved znamená, že nalezl validní řešení, ale neznamená to, že toto řešení je optimální. Hodnota optima je zvýrazněna červenou čárkovanou čarou. 
+
+\begin{table}[H]
+\centering
+\caption{Vliv nastavení fitness koeficientu na kvalitu řešení (40 běhů)}
+\label{tab:fitness_tuning}
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Fitness koef.} & \textbf{Solved} & \textbf{Optimal} & \textbf{Prům. \% Opt.} & \textbf{Prům. kroků} \\ 
+\midrule
+10  & 32 & 16 & 90,30 & 78\,136,6 \\
+20  & 36 & 24 & 92,12 & 79\,624,5 \\
+50  & 39 & 34 & 97,57 & 80\,376,6 \\
+100 & 40 & 30 & 96,31 & 79\,395,6 \\
+150 & 38 & 30 & 95,58 & 80\,164,1 \\
+200 & 39 & 31 & 97,41 & 79\,461,0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+    \centering
+    % width nastavuje šířku na 80% šířky textu, můžete upravit (např. 1.0\textwidth)
+    \includegraphics[width=\textwidth]{fitness_coeficient.png}
+    \caption{Vliv parametru fitness coefficient na konvergenci}
+    \label{fig:fitness_coeff_10}
+\end{figure}
+
+
+\subsection{Inicializace teploty}
+Počáteční teplota je volena na základě vzorce z přednášky: 
+$$
+T_0 = \frac{\delta}{\lvert\ln P_0\rvert}
+$$
+kde $\delta$ je průměrná velikost lokálních optim. V praxi jí vypočítávám tak, že spustím algoritmus na 3000 kroků s vysokou teplotou a nízkým \texttt{cooling_coefficient} --- takže to v praxi odpovídá náhodně procházce po stavovém prostoru. V každém kroku odečtu fitness aktuálního a sousedního stavu a absolutní hodnoty zprůměruji. $P_0$ je pravděpodobnost úniku z tohoto minima. 
+
+Parametr, který je lazen je tedy v tomto případě $P_0$. Vyšší hodnota odpovídá vyšší počáteční teplotě --- vyšší pravděpodobnost přijetí zhoršení.
+
+Tuto metodu automatického nastavení teploty jsem zvolil z důvodu, že teplotu automaticky škáluje na různé velikosti instance co do rozdílu mezi váhami a různé hloubky lokálních optim optim. 
+
+Hodnota byla nastavena na \texttt{P0 = 0.8}. Na grafu \ref{fig:p0_graph} je vidět jaký vliv mají 2 různé hodnoty tohoto parametru na 3 bězích na stejné instanci. Na tabulce \ref{tab:p0_tuning}
+
+\begin{figure}[H]
+    \centering
+    % width nastavuje šířku na 80% šířky textu, můžete upravit (např. 1.0\textwidth)
+    \includegraphics[width=\textwidth]{P0_graph.png}
+    \caption{Vliv parametru fitness coefficient na konvergenci}
+    \label{fig:p0_graph}
+\end{figure}
+
+
+\begin{table}[H]
+\centering
+\caption{Vliv počáteční pravděpodobnosti $P_0$ na kvalitu řešení}
+\label{tab:p0_tuning}
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{$P_0$} & \textbf{Solved} & \textbf{Optimal} & \textbf{Prům. \% Opt.} & \textbf{Prům. kroků} \\ 
+\midrule
+0,60 & 38 & 21 & 93,87 & 70\,550,2 \\
+0,70 & 38 & 22 & 93,42 & 72\,446,9 \\
+0,80 & 38 & 25 & 93,93 & 75\,422,6 \\
+0,85 & 36 & 27 & 96,60 & 76\,959,4 \\
+0,90 & 36 & 27 & 96,12 & 78\,659,9 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Hodnota 0.8 se mi zdála nejvhodnější, z důvodu počtu vyřešených a počtu optimálně vyřešených instancí.
+
+
+
+\subsection{Nastavení ekvilibria a chladícího koeficientu}
+
+Tyto dva parametry jsou spolu úzce spjaty, proto bude nejvhodnější hledat optimální hodnotu obou parametrů najednou. Výběr jsem prováděl pomocí výběru všech možných kombinací mnou vybraných hodnot parametrů a spustil je 3 krát na 10 různých instancích. Výsledky je možné vidět v tabulce \ref{tab:grid_search_results}
+
+
+\begin{table}[H]
+\centering
+\caption{Výsledky grid search pro parametry Cooling a Equilibrium Steps (průměr z 10 instancí)}
+\label{tab:grid_search_results}
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Cooling} & \textbf{Steps} & \textbf{Úspěšnost} & \textbf{Prům. skóre} & \textbf{Prům. kroků} \\ 
+\midrule
+0,950 & 1 & 86,7 \% & 18\,243,6 & 68\,837 \\
+0,950 & 3 & 96,7 \% & 20\,372,1 & 84\,845 \\
+0,950 & 4 & 100,0 \% & 20\,487,6 & 87\,170 \\
+0,950 & 6 & 100,0 \% & 20\,520,7 & 94\,481 \\
+\midrule
+0,990 & 1 & 100,0 \% & 20\,475,6 & 93\,732 \\
+0,990 & 3 & 100,0 \% & 20\,427,4 & 109\,043 \\
+0,990 & 4 & 96,7 \% & 20\,338,8 & 109\,232 \\
+0,990 & 6 & 100,0 \% & 19\,730,7 & 103\,724 \\
+\midrule
+0,995 & 1 & 100,0 \% & 20\,520,7 & 105\,897 \\
+0,995 & 3 & 100,0 \% & 19\,695,7 & 105\,010 \\
+0,995 & 4 & 100,0 \% & 20\,080,8 & 112\,458 \\
+0,995 & 6 & 100,0 \% & 19\,525,1 & 117\,938 \\
+\midrule
+0,999 & 1 & 100,0 \% & 19\,306,9 & 112\,044 \\
+0,999 & 3 & 100,0 \% & 19\,123,1 & 105\,926 \\
+0,999 & 4 & 96,7 \% & 19\,368,6 & 106\,965 \\
+0,999 & 6 & 100,0 \% & 19\,381,1 & 105\,773 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Na základě analýzy naměřených dat lze formulovat následující závěry ohledně vlivu parametrů na chování algoritmu:
+
+\begin{itemize}
+    \item \textbf{Kvalita řešení:} Nejvyššího průměrného skóre ($20\,520,7$) dosáhly dvě konfigurace: kombinace koeficientu chlazení $\alpha = 0,995$ s délkou vnitřního cyklu (equilibrium steps) $L=1$ a kombinace $\alpha = 0,95$ s $L=6$. Tyto sady parametrů se jeví jako globálně optimální pro testovanou množinu instancí.
+    
+    \item \textbf{Efektivita konvergence:} Při srovnání obou nejúspěšnějších konfigurací vykazuje varianta $\alpha = 0,95$ / $L=6$ vyšší výpočetní efektivitu. Ačkoliv obě nastavení vedou ke stejné kvalitě řešení, tato varianta konverguje průměrně v $94\,000$ krocích, zatímco varianta s $\alpha = 0,995$ vyžaduje přibližně $106\,000$ kroků. Rychlejší chlazení kompenzované delším prohledáváním na dané teplotě se tak ukazuje jako výhodnější strategie.
+    
+    \item \textbf{Vliv limitu iterací:} U extrémně pomalého chlazení ($\alpha = 0,999$) dochází k paradoxnímu poklesu průměrného skóre na hodnotu cca $19\,300$. Tento jev je způsoben tím, že algoritmus v rámci pevně stanoveného limitu maximálního počtu kroků nestihne dostatečně snížit teplotu a zkonvergovat do lokálního optima (tzv. \textit{freezing} není dokončen před vypršením \texttt{max\_steps}).
+\end{itemize}
+
+
+\subsection{Nastavení počtu kroků algoritmu bez zlepšení}
+
+Poslední parametr, který je potřeba nastavit, je parametr \texttt{max_steps_without_improvement}. Tento parametr je násoben počtem klauzulí a tím je získán počet kroků algoritmu který lze provést bez nalezení globálního maxima před ukončením algoritmu. Je potřeba 
+
+Graf 3 běhů na instanci pro hodnoty parametru 300 a 800 je na \ref{fig:max_steps_param}. Kvantitativní výsledky lze vidět na tabulce \ref{tab:results_max_steps}
+
+\begin{figure}[H]
+    \centering
+    % width nastavuje šířku na 80% šířky textu, můžete upravit (např. 1.0\textwidth)
+    \includegraphics[width=\textwidth]{max_steps_improvement_graph.png}
+    \caption{Vliv parametru fitness coefficient na konvergenci}
+    \label{fig:max_steps_param}
+\end{figure}
+
+\begin{table}[h!]
+\centering
+\caption{Porovnání výsledků pro různé hodnoty parametru max\_steps\_without\_improvement}
+\label{tab:results_modified}
+\begin{tabular}{rccccc}
+\toprule
+\textbf{Max Steps} & \textbf{Runs} & \textbf{Solved} & \textbf{Optimal} & \textbf{Avg \% Opt} & \textbf{Avg Steps} \\
+\midrule
+200  & 40 & 40 & 35 & 98.40  & 72\,888.3 \\
+300  & 40 & 40 & 37 & 99.15  & 94\,928.1 \\
+600  & 40 & 40 & 39 & 99.85  & 158\,268.0 \\
+\textbf{800}  & \textbf{40} & \textbf{40} & \textbf{40} & \textbf{100.00} & \textbf{205\,552.2} \\
+1200 & 40 & 40 & 40 & 100.00 & 290\,735.7 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Na základě výsledků shrnutých v Tabulce~\ref{tab:results} byla jako finální hodnota parametru \texttt{max\_steps\_without\_improvement} zvolena hodnota 600. Tato konfigurace představuje ideální kompromis mezi spolehlivostí algoritmu a výpočetní náročností.
+
+Důvody pro tento výběr jsou následující:
+\begin{itemize}
+    \item \textbf{Garance optimality:} Hodnota 800 je nejnižší testovanou konfigurací, která dosáhla 100\% úspěšnosti v nalezení optimálního řešení (40/40). Nižší nastavení, včetně hodnoty 600, vykazovala v několika bězích konvergenci pouze k lokálním optimům.
+    \item \textbf{Stabilita vs. Rychlost:} Ačkoliv je nastavení 600 výpočetně méně náročné, riziko nenalezení globálního optima (úspěšnost 39/40) je pro účely této aplikace nepřijatelné. Hodnota 800 tak představuje nutnou investici výpočetního času pro zajištění maximální spolehlivosti.
+    \item \textbf{Saturace výkonu:} Další navýšení parametru na 1200 sice udržuje 100\% úspěšnost, ale nepřináší žádnou kvalitativní výhodu oproti hodnotě 800, přičemž neúměrně zvyšuje výpočetní čas (\textit{Avg Steps}). Bod 800 tedy představuje hranici, kde se kvalita řešení stabilizuje.
+\end{itemize}
+
+
+Tímto jsme dokončili volbu parametrů. Finální parametry lze vidět na tabulce \ref{tab:final_params}.
+
+\begin{table}[h!]
+\centering
+\caption{Finální kombinace parametrů}
+\label{tab:final_params}
+\begin{tabular}{|l|c|}
+\hline
+\textbf{Parametr (kód)} & \textbf{Hodnota} \\ \hline
+\texttt{P0} & 0.8 \\ \hline
+\texttt{cooling\_coefficient} & 0.95 \\ \hline
+\texttt{equilibrium\_steps} & 8 \\ \hline
+\texttt{fitness\_coefficient} & 100 \\ \hline
+\texttt{max\_steps\_without\_improvement} & 800 \\ \hline
+\texttt{random\_flip} & False \\ \hline
+\end{tabular}
+\end{table}
+
+\subsection{Adaptace parametrů na jiné instance}
+
+
+Poslední částí whitebox fáze bude rozhodnutí, zda parametry fungují i pro jinak velké instance, popřípadě na instance s olišně generovanými vahami.
+
+\begin{figure}[H]
+    \centering
+    % width nastavuje šířku na 80% šířky textu, můžete upravit (např. 1.0\textwidth)
+    \includegraphics[width=\textwidth]{50_m_test.png}
+    \caption{Vliv parametru fitness coefficient na konvergenci}
+    \label{fig:50_m_test}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    % width nastavuje šířku na 80% šířky textu, můžete upravit (např. 1.0\textwidth)
+    \includegraphics[width=\textwidth]{50_q_test.png}
+    \caption{Vliv parametru fitness coefficient na konvergenci}
+    \label{fig:50_q_test}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    % width nastavuje šířku na 80% šířky textu, můžete upravit (např. 1.0\textwidth)
+    \includegraphics[width=\textwidth]{75_vars_test.png}
+    \caption{Vliv parametru fitness coefficient na konvergenci}
+    \label{fig:75_vars_test}
+\end{figure}
+
+
+
+\end{document}
+
+
